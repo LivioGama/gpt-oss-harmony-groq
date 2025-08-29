@@ -1,0 +1,7 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+
+For this project, never run `bun run start` nor `bun run dev` nor `bun run build` => I already run it once and there is hot reload

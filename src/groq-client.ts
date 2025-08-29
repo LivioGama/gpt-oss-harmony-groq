@@ -1,6 +1,6 @@
-import {GROQ_API_KEY, GROQ_HOST} from './config';
-import {convertToHarmonyFormat, parseHarmonyResponse} from './harmony-integration';
-import type {GroqResponse, OpenAIChatRequest} from './types';
+import { GROQ_API_KEY, GROQ_HOST } from './config';
+import { convertToHarmonyFormat, parseHarmonyResponse } from './harmony-official';
+import type { GroqResponse, OpenAIChatRequest } from './types';
 
 export class GroqClient {
     private apiKey: string;
@@ -24,19 +24,14 @@ export class GroqClient {
         if (isGptOss) {
             // Handle tool_choice: 'none' - if tools should be disabled, don't include them in harmony format
             const effectiveTools = (request.tool_choice === 'none') ? undefined : request.tools;
-            const harmonyPrompt = convertToHarmonyFormat(request.messages, effectiveTools, true, request.tool_choice, request.tools);
+            const harmonyPrompt = await convertToHarmonyFormat(request.messages, effectiveTools, true, request.tool_choice);
 
             processedRequest.messages = [{role: 'user', content: harmonyPrompt}];
 
-            // Handle tool_choice logic
-            if (request.tool_choice === 'none') {
-                // Remove tools and tool_choice entirely when explicitly set to 'none'
-                processedRequest.tools = undefined;
-                processedRequest.tool_choice = undefined;
-            } else if (request.tools && !request.tool_choice) {
-                // Default to 'auto' when tools are present but no choice specified
-                processedRequest.tool_choice = 'auto';
-            }
+            // For GPT-OSS with Harmony format, we don't send tools separately
+            // The tools are embedded in the Harmony prompt format
+            processedRequest.tools = undefined;
+            processedRequest.tool_choice = undefined;
         }
 
         const body = {
@@ -73,16 +68,13 @@ export class GroqClient {
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`Groq API error ${response.status}:`, errorText);
-            console.error(`Request body length:`, JSON.stringify(body).length);
-            console.error(`Request body preview:`, JSON.stringify(body).substring(0, 500));
             throw new Error(`Groq API request failed: ${response.status} ${response.statusText} - ${errorText}`);
         }
 
         const groqResponse = await response.json() as GroqResponse;
 
         if (isGptOss && groqResponse.choices?.[0]?.message?.content) {
-            const parsedResponse = parseHarmonyResponse(groqResponse.choices[0].message.content, request);
+            const parsedResponse = await parseHarmonyResponse(groqResponse.choices[0].message.content, request);
             groqResponse.choices[0].message.content = parsedResponse.content;
             if (parsedResponse.toolCalls) {
                 groqResponse.choices[0].message.tool_calls = parsedResponse.toolCalls;
@@ -102,19 +94,14 @@ export class GroqClient {
         if (isGptOss) {
             // Handle tool_choice: 'none' - if tools should be disabled, don't include them in harmony format
             const effectiveTools = (request.tool_choice === 'none') ? undefined : request.tools;
-            const harmonyPrompt = convertToHarmonyFormat(request.messages, effectiveTools, true, request.tool_choice, request.tools);
+            const harmonyPrompt = await convertToHarmonyFormat(request.messages, effectiveTools, true, request.tool_choice);
 
             processedRequest.messages = [{role: 'user', content: harmonyPrompt}];
 
-            // Handle tool_choice logic
-            if (request.tool_choice === 'none') {
-                // Remove tools and tool_choice entirely when explicitly set to 'none'
-                processedRequest.tools = undefined;
-                processedRequest.tool_choice = undefined;
-            } else if (request.tools && !request.tool_choice) {
-                // Default to 'auto' when tools are present but no choice specified
-                processedRequest.tool_choice = 'auto';
-            }
+            // For GPT-OSS with Harmony format, we don't send tools separately
+            // The tools are embedded in the Harmony prompt format
+            processedRequest.tools = undefined;
+            processedRequest.tool_choice = undefined;
         }
 
         const body = {
@@ -151,9 +138,6 @@ export class GroqClient {
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`Groq API error ${response.status}:`, errorText);
-            console.error(`Streaming request body length:`, JSON.stringify(body).length);
-            console.error(`Streaming request body preview:`, JSON.stringify(body).substring(0, 500));
             throw new Error(`Groq API request failed: ${response.status} ${response.statusText} - ${errorText}`);
         }
 
@@ -177,7 +161,6 @@ export class GroqClient {
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`Groq API error ${response.status}:`, errorText);
             throw new Error(`Groq API request failed: ${response.status} ${response.statusText}`);
         }
 
@@ -219,25 +202,15 @@ export class GroqClient {
                                         controller.enqueue(encoder.encode(line + '\n'));
                                     }
 
-                                    // Log any tool calls detected in GPT-OSS stream
                                     if (toolCalls) {
                                         streamingToolCalls = true;
-                                        console.log('🚨 TOOL CALLS DETECTED IN GPT-OSS STREAM:', JSON.stringify(toolCalls, null, 2));
-                                        console.log('🔍 Current content so far:', accumulatedContent.substring(0, 200));
-                                        console.log('🔧 Original request tool_choice:', originalRequest.tool_choice);
-                                        console.log('🔧 Original request had tools:', !!originalRequest.tools);
                                     }
                                 } catch (e) {
                                     controller.enqueue(encoder.encode(line + '\n'));
                                 }
                             } else if (line === 'data: [DONE]') {
                                 if (accumulatedContent) {
-                                    console.log('📝 GPT-OSS stream completed, analyzing final content...');
-                                    console.log('📊 Total content length:', accumulatedContent.length);
-                                    console.log('🔍 Tool calls detected during streaming:', streamingToolCalls);
-                                    console.log('📄 Final content preview:', accumulatedContent.substring(0, 300) + (accumulatedContent.length > 300 ? '...' : ''));
-
-                                    const parsedResponse = parseHarmonyResponse(accumulatedContent, originalRequest);
+                                    const parsedResponse = await parseHarmonyResponse(accumulatedContent, originalRequest);
 
                                     if (parsedResponse.toolCalls && parsedResponse.toolCalls.length > 0) {
                                         const toolCallChunk = {
